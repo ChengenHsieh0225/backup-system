@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <stdexcept>
 #include <fstream>
+#include <sstream>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <sys/socket.h>
@@ -57,6 +58,14 @@ inline std::vector<unsigned char> generate_random_bytes(size_t len) {
         throw std::runtime_error("Failed to generate random bytes!");
     }
     return buf;
+}
+
+// Step 4: Generate a secure alphanumeric-like hex Recovery Code
+inline std::string generate_recovery_code() {
+    auto bytes = generate_random_bytes(12); // 12 bytes = 24 hex characters
+    std::stringstream ss;
+    for (unsigned char b : bytes) ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
+    return ss.str();
 }
 
 // Step 2-2: Encrypt data using AES-256-GCM

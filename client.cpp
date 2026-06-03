@@ -20,66 +20,148 @@ int connect_server() {
 
 int main() {
     std::string user_password, salt = "c2_backup_system_salt";
+    std::string user_default_pass = "my_super_secret_passphrase";
     std::string default_target_dir = "target_documents";
     std::string default_restore_dir = "restored_documents";
+    std::vector<unsigned char> plaintext_aes_key;
+    std::vector<unsigned char> current_vault(120);
     
-    // 1. Login Phase
-    std::cout << "Enter Login Password (Press Enter for default): ";
-    std::getline(std::cin, user_password);
-    if (user_password.empty()) {
-        user_password = "my_super_secret_passphrase";
-    }
-
     try {
-        // Derive the key from user input password
-        int iterations = 10000; // Work factor to deter brute-force attacks
-        int key_len = 32;       // 32 bytes = 256 bits, standard for AES-256
-        auto derived_key = derive_key(user_password, salt, iterations, key_len);
-        std::vector<unsigned char> plaintext_aes_key;
-
-        // 2. Sync Vault with Server
+        // 1. Sync Vault with Server
         int sock = connect_server();
         char cmd = 'Q'; send_all(sock, &cmd, 1);
         char status; recv_all(sock, &status, 1);
 
-        if (status == '0') { // Server has no vault, generate and upload
-            std::cout << "[Client] Server has no vault. Generating new Master Vault..." << std::endl;
-            auto data_aes_key = generate_random_bytes(32);
-            auto iv = generate_random_bytes(12);
-            std::vector<unsigned char> tag(16), ciphertext;
-            aes_256_gcm_encrypt(data_aes_key, derived_key, ciphertext, iv, tag);
+        if (status == '0') {
+            // Initialization: Setup initial password and generate Recovery Code
+            std::cout << "[System] No vault found on server. Initializing..." << std::endl;
+            std::string init_pass;
+            std::cout << "Set your initial Login Password (Enter for default): ";
+            std::getline(std::cin, init_pass);
+            if (init_pass.empty()) init_pass = user_default_pass;
 
-            std::vector<unsigned char> packed_vault;
-            packed_vault.insert(packed_vault.end(), iv.begin(), iv.end());
-            packed_vault.insert(packed_vault.end(), tag.begin(), tag.end());
-            packed_vault.insert(packed_vault.end(), ciphertext.begin(), ciphertext.end());
+            // Derive the key from user input password
+            int iterations = 10000; // Work factor to deter brute-force attacks
+            int key_len = 32;       // 32 bytes = 256 bits, standard for AES-256
+            auto derived_key = derive_key(init_pass, salt, iterations, key_len);
+            auto data_aes_key = generate_random_bytes(32);
+            std::string recovery_code = generate_recovery_code();
+            auto rc_derived_key = derive_key(recovery_code, salt, iterations, key_len);
+
+            std::cout << "\n==================================================" << std::endl;
+            std::cout << "[CRITICAL] YOUR DISASTER RECOVERY CODE: " << recovery_code << std::endl;
+            std::cout << "Please store this safely. It cannot be recovered." << std::endl;
+            std::cout << "==================================================\n" << std::endl;
+
+            // Slot 1: Encrypt Data Key with Password Derived Key
+            std::vector<unsigned char> iv1 = generate_random_bytes(12), tag1(16), cipher1;
+            aes_256_gcm_encrypt(data_aes_key, derived_key, cipher1, iv1, tag1);
+
+            // Slot 2: Encrypt Data Key with Recovery Code Derived Key
+            std::vector<unsigned char> iv2 = generate_random_bytes(12), tag2(16), cipher2;
+            aes_256_gcm_encrypt(data_aes_key, rc_derived_key, cipher2, iv2, tag2);
+
+            // Pack into 120-byte payload
+            current_vault.clear();
+            current_vault.insert(current_vault.end(), iv1.begin(), iv1.end());
+            current_vault.insert(current_vault.end(), tag1.begin(), tag1.end());
+            current_vault.insert(current_vault.end(), cipher1.begin(), cipher1.end());
+            current_vault.insert(current_vault.end(), iv2.begin(), iv2.end());
+            current_vault.insert(current_vault.end(), tag2.begin(), tag2.end());
+            current_vault.insert(current_vault.end(), cipher2.begin(), cipher2.end());
 
             close(sock);
             sock = connect_server();
             char save_cmd = 'S'; send_all(sock, &save_cmd, 1);
-            send_all(sock, packed_vault.data(), 60);
-            
-            plaintext_aes_key = data_aes_key;
-            std::cout << "[Client] Master Vault generated and securely uploaded." << std::endl;
-        } else { // Vault exists, download and unlock locally
-            std::vector<unsigned char> packed_vault(60);
-            recv_all(sock, packed_vault.data(), 60);
-            
-            std::vector<unsigned char> v_iv(packed_vault.begin(), packed_vault.begin() + 12);
-            std::vector<unsigned char> v_tag(packed_vault.begin() + 12, packed_vault.begin() + 28);
-            std::vector<unsigned char> v_ciphertext(packed_vault.begin() + 28, packed_vault.end());
-            
-            aes_256_gcm_decrypt(v_ciphertext, derived_key, v_iv, v_tag, plaintext_aes_key);
-            std::cout << "[Auth] Server Master Vault loaded and unlocked successfully." << std::endl;
-        }
-        close(sock);
+            send_all(sock, current_vault.data(), 120);
+            close(sock);
 
-        // 3. Interactive Menu Loop
+            plaintext_aes_key = data_aes_key;
+            std::cout << "[Client] Initialization successful. Logged in." << std::endl;
+        } else {
+            // Vault exists: Download full vault payload for local verification
+            recv_all(sock, current_vault.data(), 120);
+            close(sock);
+
+            bool authenticated = false;
+            while (!authenticated) {
+                std::cout << "\n=== Welcome to Backup System ===" << std::endl;
+                std::cout << "1. Login with Password" << std::endl;
+                std::cout << "2. Reset Password via Recovery Code" << std::endl;
+                std::cout << "Select verification method (1-2): ";
+                std::string auth_choice;
+                std::getline(std::cin, auth_choice);
+
+                if (auth_choice == "1") {
+                    std::string user_password;
+                    std::cout << "Enter Password (Enter for default): ";
+                    std::getline(std::cin, user_password);
+                    if (user_password.empty()) user_password = "my_super_secret_passphrase";
+
+                    try {
+                        auto derived_key = derive_key(user_password, salt, 10000, 32);
+                        std::vector<unsigned char> v_iv(current_vault.begin(), current_vault.begin() + 12);
+                        std::vector<unsigned char> v_tag(current_vault.begin() + 12, current_vault.begin() + 28);
+                        std::vector<unsigned char> v_cipher(current_vault.begin() + 28, current_vault.begin() + 60);
+
+                        aes_256_gcm_decrypt(v_cipher, derived_key, v_iv, v_tag, plaintext_aes_key);
+                        std::cout << "[Auth] Login successful!" << std::endl;
+                        authenticated = true;
+                    } catch (const std::exception&) {
+                        std::cout << "[Error] Incorrect password. Access denied." << std::endl;
+                    }
+                } else if (auth_choice == "2") {
+                    std::string input_rc;
+                    std::cout << "Enter your 24-character Recovery Code: ";
+                    std::getline(std::cin, input_rc);
+
+                    try {
+                        auto rc_derived_key = derive_key(input_rc, salt, 10000, 32);
+                        std::vector<unsigned char> r_iv(current_vault.begin() + 60, current_vault.begin() + 72);
+                        std::vector<unsigned char> r_tag(current_vault.begin() + 72, current_vault.begin() + 88);
+                        std::vector<unsigned char> r_cipher(current_vault.begin() + 88, current_vault.end());
+
+                        // Unlock Master AES Key using the recovery code
+                        aes_256_gcm_decrypt(r_cipher, rc_derived_key, r_iv, r_tag, plaintext_aes_key);
+                        std::cout << "[Auth] Recovery code verified! Identity confirmed." << std::endl;
+
+                        // Enforce setting a new login password
+                        std::string new_pass;
+                        std::cout << "Enter NEW password: ";
+                        std::getline(std::cin, new_pass);
+                        if (new_pass.empty()) new_pass = "my_super_secret_passphrase";
+
+                        auto new_derived_key = derive_key(new_pass, salt, 10000, 32);
+
+                        // Re-encrypt Slot 1 with the new password derived key
+                        std::vector<unsigned char> new_iv = generate_random_bytes(12), new_tag(16), new_cipher;
+                        aes_256_gcm_encrypt(plaintext_aes_key, new_derived_key, new_cipher, new_iv, new_tag);
+
+                        std::copy(new_iv.begin(), new_iv.end(), current_vault.begin());
+                        std::copy(new_tag.begin(), new_tag.end(), current_vault.begin() + 12);
+                        std::copy(new_cipher.begin(), new_cipher.end(), current_vault.begin() + 28);
+
+                        // Synchronize updated vault container back to server
+                        sock = connect_server();
+                        char save_cmd = 'S'; send_all(sock, &save_cmd, 1);
+                        send_all(sock, current_vault.data(), 120);
+                        close(sock);
+
+                        std::cout << "[Success] Password reset complete. Automatically logged in." << std::endl;
+                        authenticated = true;
+                    } catch (const std::exception&) {
+                        std::cout << "[Error] Invalid recovery code! Reset denied." << std::endl;
+                    }
+                }
+            }
+        }
+
+        // 2. Main Functional Menu Loop (Accessible only after successful authentication)
         std::string choice;
         while (true) {
-            std::cout << "\n=== Backup System Menu ===" << std::endl;
-            std::cout << "1. Set target_dir and execute backup" << std::endl;
-            std::cout << "2. Restore backup content to restore_dir" << std::endl;
+            std::cout << "\n=== Distributed Backup System Menu ===" << std::endl;
+            std::cout << "1. Set target_dir and execute backup upload" << std::endl;
+            std::cout << "2. Download and Restore backup content to restore_dir" << std::endl;
             std::cout << "3. Exit" << std::endl;
             std::cout << "Select an option (1-3): ";
             std::getline(std::cin, choice);
@@ -160,6 +242,5 @@ int main() {
         std::cerr << "\n[Fatal Error] " << e.what() << std::endl;
         return 1;
     }
-
     return 0;
 }

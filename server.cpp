@@ -14,17 +14,17 @@ void handle_client(int client_sock) {
         char status = fs::exists("server_storage/vault.dat") ? '1' : '0';
         send_all(client_sock, &status, 1);
         if (status == '1') {
-            std::vector<unsigned char> buf(60); // 12 + 16 + 32
+            std::vector<unsigned char> buf(120); // (12 + 16 + 32) * 2
             std::ifstream in("server_storage/vault.dat", std::ios::binary);
-            in.read(reinterpret_cast<char*>(buf.data()), 60);
-            send_all(client_sock, buf.data(), 60);
+            in.read(reinterpret_cast<char*>(buf.data()), 120);
+            send_all(client_sock, buf.data(), 120);
         }
     } 
-    else if (cmd == 'S') { // Save Vault
-        std::vector<unsigned char> buf(60);
-        if (recv_all(client_sock, buf.data(), 60)) {
+    else if (cmd == 'S') { // Save/Update Vault
+        std::vector<unsigned char> buf(120);
+        if (recv_all(client_sock, buf.data(), 120)) {
             std::ofstream out("server_storage/vault.dat", std::ios::binary);
-            out.write(reinterpret_cast<const char*>(buf.data()), 60);
+            out.write(reinterpret_cast<const char*>(buf.data()), 120);
             std::cout << "[Server] Master Vault saved successfully." << std::endl;
         }
     } 
