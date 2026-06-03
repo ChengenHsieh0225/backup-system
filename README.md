@@ -4,10 +4,10 @@
 
 Goal: Understand key hierarchies and the reset workflow.
 
-- [ ] **Key Derivation**: User Passphrase $\rightarrow$ Derived Key via PBKDF2.
-- [ ] **Master Vault**: Use the Derived Key to encrypt a single AES Key (representing the Key Set) and store it on the server.
-- [ ] **Backup & Restore**: Client uses the plaintext AES Key to encrypt/decrypt the target directory directly.
-- [ ] **Recovery Mechanism**: Generate a random string as the Recovery Code. During a reset, use it to decrypt the old AES Key, re-encrypt it with the new Derived Key, and update the server.
+- [x] **Key Derivation**: User Passphrase $\rightarrow$ Derived Key via PBKDF2.
+- [x] **Master Vault**: Use the Derived Key to encrypt a single AES Key (representing the Key Set) and store it on the server.
+- [x] **Backup & Restore**: Client uses the plaintext AES Key to encrypt/decrypt the target directory directly.
+- [x] **Recovery Mechanism**: Generate a random string as the Recovery Code. During a reset, use it to decrypt the old AES Key, re-encrypt it with the new Derived Key, and update the server.
 
 ### Phase 2: Virtual Disk & Deduplication (Storage Efficiency)
 
