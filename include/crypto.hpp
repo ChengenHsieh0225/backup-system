@@ -8,17 +8,30 @@
 #include <fstream>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-// Helper utility to print binary data in hex format
-inline void print_hex(const std::string& label, const unsigned char* data, size_t len) {
-    std::cout << label << ": ";
-    for (size_t i = 0; i < len; ++i) {
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
+// Network utilities for exact TCP streaming
+inline bool send_all(int sock, const void* data, size_t len) {
+    const char* ptr = static_cast<const char*>(data);
+    while (len > 0) {
+        ssize_t sent = send(sock, ptr, len, 0);
+        if (sent <= 0) return false;
+        ptr += sent; len -= sent;
     }
-    std::cout << std::dec << std::endl; // Reset to decimal format
+    return true;
+}
+inline bool recv_all(int sock, void* data, size_t len) {
+    char* ptr = static_cast<char*>(data);
+    while (len > 0) {
+        ssize_t rcvd = recv(sock, ptr, len, 0);
+        if (rcvd <= 0) return false;
+        ptr += rcvd; len -= rcvd;
+    }
+    return true;
 }
 
-// Step 1: PBKDF2-HMAC-SHA256 Key Derivation Function
+// Step 1: PBKDF2 Key Derivation
 // Derives a secure cryptographic key from a user password and salt
 inline std::vector<unsigned char> derive_key(const std::string& password, const std::string& salt, int iterations, int key_len) {
     std::vector<unsigned char> derived_key(key_len);
@@ -135,54 +148,34 @@ inline void aes_256_gcm_decrypt(const std::vector<unsigned char>& ciphertext,
     EVP_CIPHER_CTX_free(ctx);
 }
 
-// Step 3-2: Encrypt a single file and prepend metadata [IV(12B)] + [Tag(16B)] + [Ciphertext]
-inline void encrypt_file(const std::string& src, const std::string& dest, const std::vector<unsigned char>& key) {
+// Step 3-2: Encrypt local file directly into a packed binary payload buffer
+inline std::vector<unsigned char> encrypt_file_to_buffer(const std::string& src, const std::vector<unsigned char>& key) {
     std::ifstream in(src, std::ios::binary | std::ios::ate);
-    if (!in) throw std::runtime_error("Failed to open source file: " + src);
-    std::streamsize size = in.tellg();
-    in.seekg(0, std::ios::beg);
+    if (!in) throw std::runtime_error("Open src fail: " + src);
+    std::streamsize size = in.tellg(); in.seekg(0, std::ios::beg);
+    std::vector<unsigned char> plaintext(size); in.read(reinterpret_cast<char*>(plaintext.data()), size); in.close();
 
-    std::vector<unsigned char> plaintext(size);
-    in.read(reinterpret_cast<char*>(plaintext.data()), size);
-    in.close();
-
-    auto iv = generate_random_bytes(12);
-    std::vector<unsigned char> tag(16);
-    std::vector<unsigned char> ciphertext;
-
+    auto iv = generate_random_bytes(12); std::vector<unsigned char> tag(16), ciphertext;
     aes_256_gcm_encrypt(plaintext, key, ciphertext, iv, tag);
 
-    std::ofstream out(dest, std::ios::binary);
-    if (!out) throw std::runtime_error("Failed to open destination file: " + dest);
-    out.write(reinterpret_cast<const char*>(iv.data()), iv.size());
-    out.write(reinterpret_cast<const char*>(tag.data()), tag.size());
-    out.write(reinterpret_cast<const char*>(ciphertext.data()), ciphertext.size());
-    out.close();
+    std::vector<unsigned char> packed;
+    packed.insert(packed.end(), iv.begin(), iv.end());
+    packed.insert(packed.end(), tag.begin(), tag.end());
+    packed.insert(packed.end(), ciphertext.begin(), ciphertext.end());
+    return packed;
 }
 
-// Step 3-3: Decrypt a single file by parsing metadata header
-inline void decrypt_file(const std::string& src, const std::string& dest, const std::vector<unsigned char>& key) {
-    std::ifstream in(src, std::ios::binary | std::ios::ate);
-    if (!in) throw std::runtime_error("Failed to open encrypted file: " + src);
-    std::streamsize size = in.tellg();
-    
-    if (size < 28) throw std::runtime_error("Encrypted file is truncated or corrupted: " + src);
-
-    std::vector<unsigned char> iv(12);
-    std::vector<unsigned char> tag(16);
-    std::vector<unsigned char> ciphertext(size - 28);
-
-    in.seekg(0, std::ios::beg);
-    in.read(reinterpret_cast<char*>(iv.data()), iv.size());
-    in.read(reinterpret_cast<char*>(tag.data()), tag.size());
-    in.read(reinterpret_cast<char*>(ciphertext.data()), ciphertext.size());
-    in.close();
+// Step 3-3: Decrypt a packed binary buffer directly into a local restored file
+inline void decrypt_buffer_to_file(const std::vector<unsigned char>& packed, const std::string& dest, const std::vector<unsigned char>& key) {
+    if (packed.size() < 28) throw std::runtime_error("Packed data truncated");
+    std::vector<unsigned char> iv(packed.begin(), packed.begin() + 12);
+    std::vector<unsigned char> tag(packed.begin() + 12, packed.begin() + 28);
+    std::vector<unsigned char> ciphertext(packed.begin() + 28, packed.end());
 
     std::vector<unsigned char> plaintext;
     aes_256_gcm_decrypt(ciphertext, key, iv, tag, plaintext);
 
     std::ofstream out(dest, std::ios::binary);
-    if (!out) throw std::runtime_error("Failed to open restored file: " + dest);
+    if (!out) throw std::runtime_error("Open dest fail: " + dest);
     out.write(reinterpret_cast<const char*>(plaintext.data()), plaintext.size());
-    out.close();
 }
