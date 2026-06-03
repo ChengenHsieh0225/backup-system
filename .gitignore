@@ -1,0 +1,19 @@
+# 1. 編譯出來的執行檔 (沒有副檔名)
+client
+server
+*.exe
+
+# 2. 測試用的實體檔案 (避免不小心 Git commit 幾十 MB 的垃圾)
+*.img
+*.dat
+*.bin
+*.bak
+mock.img
+
+# 3. 密碼學/連結庫產出的暫存檔
+*.o
+*.obj
+
+# 4. 作業系統殘留檔
+.DS_Store
+Thumbs.db
