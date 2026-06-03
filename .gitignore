@@ -16,7 +16,7 @@
 *.bak
 mock.img
 vault.dat
-backup_server_storage
+server_storage
 restored_documents
 target_documents
 
