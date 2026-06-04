@@ -1,3 +1,24 @@
+## Encryption Key Generation Flow
+```mermaid
+graph TD
+    %% Subgraph 1: Key Generation & Derivation
+    subgraph Preparation [1. Key Generation & Derivation]
+        A[User Password] -->|PBKDF2 Layer| B(Password Derived Key)
+        C[Recovery Code] -->|PBKDF2 Layer| D(Recovery Derived Key)
+    end
+
+    %% Subgraph 2: Vault Initialization
+    subgraph Vault_Init [2. Initialization & Packaging]
+        B -->|AES-256-GCM Encrypt + IV1| G[Slot 1: IV1 + Tag1 + Cipher1]
+        D -->|AES-256-GCM Encrypt + IV2| H[Slot 2: IV2 + Tag2 + Cipher2]
+        G & H -->|Combine into 120 Bytes| I[vault.dat Buffer]
+        I -->|TCP Send Command 'S'| J[(Remote Server Storage)]
+    end
+
+    %% Styling Elements
+    style J fill:#dc3545,stroke:#f8d7da,stroke-width:2px;f8d7da
+```
+
 ## Project Roadmap
 
 ### Phase 1: Core Security Stack (Encryption & Key Rotation)
@@ -25,3 +46,19 @@ Goal: Implement delta-transfers and basic version control.
 - [ ] **Incremental Upload**: Transmit only the modified 4KB blocks to the server.
 - [ ] **Snapshot Manifest**: For every successful backup, the server records a timestamp and a list of Chunk IDs (e.g., `Snapshot_V1 = [HashA, HashB, HashC]`).
 - [ ] **Point-in-Time Recovery**: To restore a specific version, request its manifest from the server and reassemble the 4KB chunks back into the `mock.img` file.
+
+## Getting Started
+
+### 1. Compile and execute the server side
+
+```bash
+g++ -std=c++17 server.cpp -Iinclude -I/opt/homebrew/opt/openssl@3/include -L/opt/homebrew/opt/openssl@3/lib -lcrypto -o server
+./server
+```
+
+### 2. Compile and execute the client side
+
+```bash
+g++ -std=c++17 client.cpp -Iinclude -I/opt/homebrew/opt/openssl@3/include -L/opt/homebrew/opt/openssl@3/lib -lcrypto -o client
+./client
+```
